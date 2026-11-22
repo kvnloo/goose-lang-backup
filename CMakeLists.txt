@@ -69,6 +69,7 @@ add_executable(goose
     src/codegen_emit.h
     src/codegen_stacks.h
     src/codegen_nodes.h
+    src/codegen_debugmap.h
     src/runtime_inline.h
     src/jit.h
     src/runtime/runtime.h

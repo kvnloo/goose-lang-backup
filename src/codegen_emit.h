@@ -391,6 +391,7 @@ inline void CodeGen::ResetFnState() {
     reftops = false;
     topown = topglob = topcap = topdst = false;
     vnames.clear();
+    scopeends.clear();
     refalias.clear();
     aliaspath.clear();
     aliasbound.clear();
@@ -492,6 +493,10 @@ inline string CodeGen::HoistAggregateDecls(string &b) {
         "volatile", "register", "unsigned", "signed", "long", "short", "struct", "union",
         "enum", "typedef", "if", "for", "while", "switch",
     };
+    static const unordered_set<string> scalars = {
+        "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t",
+        "uint64_t", "float", "double", "int", "char", "size_t", "void",
+    };
     auto isid = [](char c) { return isalnum((unsigned char)c) || c == '_'; };
     string decls, out;
     out.reserve(b.size());
@@ -504,14 +509,43 @@ inline string CodeGen::HoistAggregateDecls(string &b) {
         size_t i = 0;
         while (i < line.size() && line[i] == ' ') i++;
         auto indent = i;
+        // So is a loop counter declared in a for: the loop's body would be
+        // a block of its own.
+        if (linedirs && line.substr(i, 5) == "for (") {
+            auto ts = i + 5, j = ts;
+            while (j < line.size() && isid(line[j])) j++;
+            string type(line.substr(ts, j - ts));
+            if (!type.empty() && (!keep.count(type) || scalars.count(type)) && j < line.size() &&
+                line[j] == ' ') {
+                auto ns = ++j;
+                while (j < line.size() && isid(line[j])) j++;
+                string name(line.substr(ns, j - ns));
+                if (!name.empty() && !isdigit((unsigned char)name[0]) &&
+                    line.substr(j, 3) == " = ") {
+                    Append(decls, "    ", type, " ", name, ";\n");
+                    out.append(line.substr(0, ts));
+                    out.append(line.substr(ns));
+                    out += '\n';
+                    continue;
+                }
+            }
+        }
         auto ts = i;
         while (i < line.size() && isid(line[i])) i++;
         string type(line.substr(ts, i - ts));
         bool hoist = false;
         string name, init;
-        if (!type.empty() && !isdigit((unsigned char)type[0]) && !keep.count(type) &&
+        // Under -g scalars and pointers move too: a C block that
+        // declares a variable is a lexical block in the debug information,
+        // and a debugger puts a breakpoint location in each block a line's
+        // code passes through, so one Goose line would stop several times.
+        string stars;
+        auto scalar = linedirs && scalars.count(type);
+        if (!type.empty() && !isdigit((unsigned char)type[0]) && (!keep.count(type) || scalar) &&
             i < line.size() && line[i] == ' ') {
             i++;
+            if (linedirs)
+                while (i < line.size() && line[i] == '*') stars += '*', i++;
             auto ns = i;
             while (i < line.size() && isid(line[i])) i++;
             name = string(line.substr(ns, i - ns));
@@ -529,7 +563,7 @@ inline string CodeGen::HoistAggregateDecls(string &b) {
             out += '\n';
             continue;
         }
-        Append(decls, "    ", type, " ", name, ";\n");
+        Append(decls, "    ", type, " ", stars, name, ";\n");
         if (!init.empty()) {
             out.append(indent, ' ');
             if (init[0] != '{') {
@@ -614,6 +648,10 @@ inline void CodeGen::EmitSpec(FnSpec *sp, bool er) {
     FindRefAliases(sp);
     PlanTopClasses(sp);
     markers = true;
+    // The prologue is the declaration's line, where a breakpoint on the
+    // function stops.
+    srcline = sp->sf->line;
+    if (linedirs) blockends.assign(1, sp->sf->end.line);
     PushSc(SC_FN);
     auto params = SigParams(sp, true, er);
     // The spellings are only known once SigParams has named the parameters.
@@ -668,7 +706,10 @@ inline void CodeGen::EmitSpec(FnSpec *sp, bool er) {
         if (auto fi = Is<IfExpr>(tail); fi && !fi->elseb) asvalue = false;
         if (asvalue && !IsVoidT(tail->exprtype)) {
             vector<Node *> vals = { tail };
+            auto outer = srcline;   // The tail's own line, as GenAt gives it.
+            if (linedirs && tail->line.line > 0) srcline = tail->line;
             GenNormalReturn(vals);
+            srcline = outer;
         } else {
             GenStmt(tail);
         }
@@ -680,6 +721,8 @@ inline void CodeGen::EmitSpec(FnSpec *sp, bool er) {
             L(CT(sp->rets[curinfo->cret]), " ", d, " = {0};");
             L("return ", d, ";");
         } else {
+            // Falling off the end returns at the closing `}`.
+            if (linedirs && sp->sf->end.line > 0) srcline = sp->sf->end;
             Epilogue("");
         }
     }
@@ -708,9 +751,13 @@ inline void CodeGen::EmitSpec(FnSpec *sp, bool er) {
         Append(fnbody, "    uint8_t *", p.second, " = ", gnames[p.first], ".base;\n");
     fnbody += bodyout;
     auto name = er ? ernames[sp] : curinfo->cname;
+    if (linedirs) MapFunction(sp, name);
+    LineDir(code, sp->sf->line);
     if (sp->sf->issimd) EmitSimdVersions(sp, name, params, fnbody);
     else Append(code, "static ", FnAttrs(sp), SigRet(sp), " ", name, "(", params, ") {\n", fnbody,
                 "}\n\n");
+    if (linedirs) Append(code, LINE_RESET, "\n");
+    srcline = Line {};
     curspec = nullptr;
     curinfo = nullptr;
     emiter = false;
