@@ -1,10 +1,22 @@
 enum Mode { Off, Level { value: i64 } }
 enum Message { Empty, Text { value: u8[] } }
 enum Box<T> { Empty, Value { value: T } }
+enum Choice { Empty, Data { value: i64, text: u8[] } }
 
 fn level(value: i64) -> Mode.Level { Mode.Level { value: value } }
 fn read_enum() -> Mode { print("enum"); Mode.Level { value: 7 } }
 fn read_variant() -> Mode.Level { print("variant"); Mode.Level { value: 7 } }
+
+fn get_ref<T>(value: T&) -> T& { value }
+
+fn set_value(choice: Choice..&, value: i64) {
+    match choice { Data &data => { data.value = value; }, Empty => {} }
+}
+
+fn change(choice: Choice..&) -> Choice.Data {
+    set_value(choice, 2);
+    return Choice.Data { value: 2, text: "text" };
+}
 
 fn main() {
     let fixed: Mode = Mode.Level { value: 7 };
@@ -25,4 +37,13 @@ fn main() {
     print(Box<i64>.Value { value: 8 } == boxed);
     print(read_enum() == read_variant());
     print(read_variant() == read_enum());
+
+    var choice: Choice.. = Choice.Data { value: 1, text: "text" };
+    print(choice == change(choice));
+    set_value(choice, 1);
+    print(get_ref(choice) == change(choice));
+    set_value(choice, 1);
+    print(choice != change(choice));
+    set_value(choice, 1);
+    print(get_ref(choice) != change(choice));
 }

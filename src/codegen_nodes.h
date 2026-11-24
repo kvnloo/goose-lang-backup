@@ -217,6 +217,13 @@ inline string Binary::CgX(CodeGen &cg) {
                     cg.L("const ", type, " *", p, " = &(", value, ");");
                     return cat("(*", p, ")");
                 }
+                if (first && cg.IsBytesT(et) && !cg.HasSelfRelRef(et) && cg.HasStmts(right)) {
+                    // A variant-producing expression can mutate the enum before comparison.
+                    string stk;
+                    auto base = cg.BytesTemp(stk);
+                    cg.GenAny(n, Dst { DK_STACK, stk, et });
+                    return base;
+                }
                 return first ? cg.GenOperandVal(n, true) : cg.GenVal(n);
             }
             auto build = [&](const Dst &d) { cg.GenAny(n, d); };
