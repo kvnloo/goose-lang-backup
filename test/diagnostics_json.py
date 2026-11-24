@@ -28,19 +28,24 @@ def check_diagnostics_json(exe, base):
             if not good:
                 raise RuntimeError(f"diagnostics json: {what}:\n{text}")
 
-        def both(name, source=None):
+        def both(name, source=None, *, expected_code=None):
             """The fixture checked in text mode and in JSON mode, as the parsed
             JSON and the text mode's diagnostics, once what the two modes have
             to agree on is checked: the exit code, the text of each
             diagnostic, where it says it is, and that stdout holds the JSON
             alone."""
-            if source is not None:
+            if isinstance(source, bytes):
+                (root / name).write_bytes(source)
+            elif source is not None:
                 tc.write_text(root / name, source)
             code, out, err = tc.run_capture([exe, "check", "--stats", name], cwd=root)
             jcode, jout, jerr = tc.run_capture([exe, "check", "--stats", "--diagnostics", "json", name],
                                                cwd=root)
             require(code == jcode, f"{name}: exit code {code} in text mode, {jcode} as JSON",
                     err + jerr)
+            if expected_code is not None:
+                require(code == expected_code, f"{name}: expected exit {expected_code}, got {code}",
+                        err + jerr)
             try:
                 diags = json.loads(jout)
             except ValueError as e:
@@ -80,6 +85,25 @@ def check_diagnostics_json(exe, base):
         require(diags[0]["col"] == caret.index("^") + 1 and
                 diags[0]["endCol"] == diags[0]["col"] + 1 and diags[0]["endLine"] == 2,
                 "lexer error at its caret", err + "\n" + json.dumps(diags))
+
+        # Write the bytes as-is so neither Python nor Git normalizes the line endings.
+        for name, source, line, col in (
+            ("cr_comment.goose", b"//\rfn main(){}\r", 1, 3),
+            ("cr_inside_body.goose", b"fn main() {\r\n    print(1);\r    print(2);\r}\n", 2, 14),
+            ("cr_block_comment.goose", b"/* outer /* nested */\r */\nfn main(){}\n", 1, 22),
+            ("cr_at_eof.goose", b"fn main(){}\r", 1, 12),
+        ):
+            diags, err = both(name, source, expected_code=1)
+            require(len(diags) == 1 and diags[0]["severity"] == "error" and
+                    "line endings are LF or CRLF" in diags[0]["message"] and
+                    (diags[0]["line"], diags[0]["col"]) == (line, col) and
+                    (diags[0]["endLine"], diags[0]["endCol"]) == (line, col + 1),
+                    f"{name}: one diagnostic at the bare carriage return", err + json.dumps(diags))
+
+        source = b'// Main.\nfn main() {\n    /* outer /* nested */\n       comment */\n    print("\\r");\n}\n'
+        for name, text in (("lf.goose", source), ("crlf.goose", source.replace(b"\n", b"\r\n"))):
+            diags, err = both(name, text, expected_code=0)
+            require(not diags, f"{name}: accepted without diagnostics", err)
 
         # The errors after a """ string the lexer rejected, which the parse
         # skips past, at their own lines: a line short of the margin, text

@@ -218,6 +218,16 @@ struct Lexer {
         Next();
     }
 
+    [[noreturn]] void BareCarriageReturn(const char *at) {
+        // Stop at the first invalid line ending rather than guessing where
+        // the next line begins.
+        p = at + strlen(at);
+        tok = T_EOF;
+        scanning = false;
+        ErrorAt("carriage return without a following line feed (line endings are LF or CRLF)",
+                line, linestart, at);
+    }
+
     void Next() {
         prevend = p;
         prevendline = line;
@@ -230,7 +240,10 @@ struct Lexer {
         again:
         for (;;) {
             auto c = *p;
-            if (c == ' ' || c == '\t' || c == '\r') { p++; }
+            if (c == '\r') {
+                if (p[1] != '\n') BareCarriageReturn(p);
+                p++;
+            } else if (c == ' ' || c == '\t') { p++; }
             else if (c == '\n') { p++; line++; linestart = p; }
             else break;
         }
@@ -332,9 +345,9 @@ struct Lexer {
                     auto own = true;
                     for (auto q = linestart; q < start; q++) own = own && (*q == ' ' || *q == '\t');
                     if (own && (!docstart || docline + 1 != line)) docstart = start;
-                    while (*p && *p != '\n') p++;
+                    while (*p && *p != '\n' && *p != '\r') p++;
                     if (own) {
-                        docend = p > start && p[-1] == '\r' ? p - 1 : p;
+                        docend = p;
                         docline = line;
                     }
                     goto again;
@@ -345,6 +358,7 @@ struct Lexer {
                     for (auto nesting = 1; nesting;) {
                         switch (*p++) {
                             case 0: p--; Error("unterminated /* comment");
+                            case '\r': if (*p != '\n') BareCarriageReturn(p - 1); break;
                             case '\n': line++; linestart = p; break;
                             case '*': if (*p == '/') { p++; nesting--; } break;
                             case '/': if (*p == '*') { p++; nesting++; } break;
@@ -516,7 +530,7 @@ struct Lexer {
             auto e = l;
             while (*e != '\n') e++;
             auto text = string_view(l, (size_t)(e - l));
-            // Line breaks are \n whatever the file uses.
+            // Both LF and CRLF become \n in the string.
             if (!text.empty() && text.back() == '\r') text.remove_suffix(1);
             if (l != first) sval += '\n';
             if (text.substr(0, margin.size()) == margin) {
