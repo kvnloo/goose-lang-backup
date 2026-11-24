@@ -300,6 +300,7 @@ fn rand_int(r: rng&, n: i64) -> i64 {
 fn rand_range(r: rng&, size: i64) -> i64 { rand_int(r, size) }
 fn rand_range(r: rng&, lo: i64, size: i64) -> i64 {
     assert(size > 0);
+    assert(lo <= 9223372036854775807 - (size - 1));
     return lo + rand_int(r, size);
 }
 

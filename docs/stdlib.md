@@ -218,7 +218,7 @@ struct rng { s: u64 }                    // splitmix64; the seed is the state
 fn rand_u64(r: rng&) -> u64
 fn rand_int(r: rng&, n: i64) -> i64      // uniform in [0, n), without modulo bias; asserts n > 0
 fn rand_range(r: rng&, size: i64) -> i64            // uniform in [0, size); asserts size > 0
-fn rand_range(r: rng&, lo: i64, size: i64) -> i64   // uniform in [lo, lo + size); asserts size > 0
+fn rand_range(r: rng&, lo: i64, size: i64) -> i64   // uniform in [lo, lo + size); asserts size > 0 and last value fits
 fn rand_flt(r: rng&) -> f64              // uniform in [0, 1), 53 bits
 fn rand_f32(r: rng&) -> f32              // uniform in [0, 1), 24 bits
 fn rand_gaussian(r: rng&) -> f64         // standard normal distribution: mean 0, variance 1
@@ -233,8 +233,9 @@ let height = 170.0 + 7.5 * r.rand_gaussian();
 ```
 
 `rand_range` takes a count rather than an end, as a slice's length does, so
-`rand_range(r, lo, n)` has exactly `n` results; `lo + size - 1` has to fit
-in `i64`. Without `lo` it starts at 0, the same as `rand_int`. `rand_flt`
+`rand_range(r, lo, size)` has exactly `size` results. It aborts if the last
+result, `lo + (size - 1)`, would exceed `i64`. Without `lo` it starts
+at 0, the same as `rand_int`. `rand_flt`
 and `rand_f32` take the top 53 or 24 bits of a draw, so every result is a
 multiple of 2^-53 or 2^-24 and each is equally likely. `rand_gaussian` draws
 from the normal (Gaussian) distribution by Marsaglia's polar method. It
